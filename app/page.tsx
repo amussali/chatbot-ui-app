@@ -11,6 +11,22 @@ type Message = {
   timestamp: string;
 };
 
+type ChatRequest = {
+  city: string;
+  message: string;
+  conversation_id?: string | null;
+};
+
+type ChatResponse = {
+  conversation_id: string;
+  reply: string;
+  city: string;
+  generated_at: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_CHAT_API_BASE_URL ?? "http://localhost:8000";
+
 const formatTime = (date: Date) =>
   date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -40,6 +56,9 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [selectedModel, setSelectedModel] = useState("agent-default");
+  const [city, setCity] = useState("");
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -47,10 +66,15 @@ export default function Home() {
     listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages.length]);
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isThinking) return;
+
+    if (!city.trim()) {
+      setError("Please enter a city before asking about the weather.");
+      return;
+    }
 
     const userMessage = createMessage({
       role: "user",
@@ -60,17 +84,42 @@ export default function Home() {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsThinking(true);
+    setError(null);
 
-    // Mock AI response – replace with FastAPI call when wiring backend
-    setTimeout(() => {
+    const payload: ChatRequest = {
+      city: city.trim(),
+      message: trimmed,
+      conversation_id: conversationId ?? null,
+    };
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Backend returned ${res.status}`);
+      }
+
+      const data: ChatResponse = await res.json();
+      setConversationId(data.conversation_id);
+
       const assistantMessage = createMessage({
         role: "assistant",
-        content:
-          "This is a mock AI response. In your real app, this will stream from your FastAPI + agent backend.",
+        content: data.reply,
       });
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unexpected error talking to backend.";
+      setError(`Could not reach FastAPI chat backend. ${message}`);
+    } finally {
       setIsThinking(false);
-    }, 900);
+    }
   };
 
   const handleQuickPrompt = (prompt: string) => {
@@ -79,7 +128,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950/90 px-4 py-6 text-slate-50">
-      <main className="flex h-[min(44rem,calc(100vh-3rem))] w-full max-w-5xl flex-col overflow-hidden rounded-3xl border border-slate-800/80 bg-slate-950/70 shadow-[0_20px_80px_rgba(15,23,42,0.85)] backdrop-blur-xl">
+      <main className="flex w-full max-w-5xl flex-col rounded-3xl border border-slate-800/80 bg-slate-950/70 shadow-[0_20px_80px_rgba(15,23,42,0.85)] backdrop-blur-xl">
         {/* Header */}
         <header className="flex items-center justify-between border-b border-slate-800/80 px-5 py-4">
           <div className="flex items-center gap-3">
@@ -96,7 +145,7 @@ export default function Home() {
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-slate-400">
-                Frontend-only UI • Next.js + FastAPI agent ready
+                Weather-focused AI agent • FastAPI backend over HTTP
               </p>
             </div>
           </div>
@@ -117,6 +166,12 @@ export default function Home() {
             </select>
           </div>
         </header>
+
+        {error && (
+          <div className="mx-5 mt-2 rounded-2xl border border-rose-500/60 bg-rose-950/60 px-3 py-2 text-xs text-rose-100">
+            {error}
+          </div>
+        )}
 
         {/* Body */}
         <div className="flex flex-1 flex-col gap-4 px-5 pb-4 pt-3 sm:flex-row">
@@ -211,15 +266,32 @@ export default function Home() {
 
           {/* Sidebar / quick actions */}
           <aside className="mt-1 flex w-full flex-col gap-3 rounded-3xl border border-slate-800/80 bg-slate-950/70 px-4 py-3 text-xs text-slate-300 sm:mt-0 sm:w-64">
+            <div className="space-y-2">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                City
+              </h2>
+              <input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="e.g. London"
+                className="w-full rounded-xl border border-slate-700/80 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-50 placeholder:text-slate-500 outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-500/70"
+              />
+              <p className="text-[10px] text-slate-500">
+                Whatever you type here is sent as the city to the weather agent.
+              </p>
+            </div>
+
+            <div className="h-px bg-gradient-to-r from-transparent via-slate-700/80 to-transparent" />
+
             <div>
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                 Quick prompts
               </h2>
               <div className="mt-2 flex flex-wrap gap-2">
                 {[
-                  "Summarize this feature spec.",
-                  "Draft a message to my team.",
-                  "Help me design the API surface.",
+                  "What is the weather like today?",
+                  "Will it rain this evening?",
+                  "Is it good running weather tomorrow morning?",
                 ].map((prompt) => (
                   <button
                     key={prompt}
@@ -240,9 +312,9 @@ export default function Home() {
                 Session
               </h2>
               <p className="text-[11px] leading-relaxed text-slate-400">
-                This UI is ready to be connected to your FastAPI backend. Plug
-                in streaming responses, tools, and agent state without changing
-                the layout.
+                Conversations are kept in memory in this tab. The backend sends back a{" "}
+                <span className="font-mono text-slate-200">conversation_id</span> that keeps the
+                thread alive across turns.
               </p>
             </div>
           </aside>
